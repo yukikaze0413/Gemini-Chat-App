@@ -6,6 +6,10 @@ from google.generativeai.models import list_models
 from google.generativeai.generative_models import GenerativeModel
 from google.generativeai.types import GenerationConfig
 import sys
+import logging
+
+# 获取日志记录器
+logger = logging.getLogger(__name__)
 
 def get_api_file_path():
     if getattr(sys, 'frozen', False):
@@ -18,7 +22,7 @@ def get_api_file_path():
     return api_path
 
 class GeminiClient:
-    def __init__(self, api_key=None, model_name="gemini-2.5-flash", system_instruction=None):
+    def __init__(self, api_key=None, model_name="gemini-2.0-flash", system_instruction=None):
         """
         初始化 Gemini 客户端。
         """
@@ -28,6 +32,8 @@ class GeminiClient:
                 api_key = f.read().strip()
         if not api_key:
             raise ValueError("API Key not found. Please make sure api.txt exists and contains your API key.")
+        
+        logger.info(f"初始化Gemini客户端 - 模型: {model_name}")
         configure(api_key=api_key)
         self.model_name = model_name
         self.system_instruction = system_instruction
@@ -55,35 +61,42 @@ class GeminiClient:
             self._init_model()
             print(f"Model switched to: {self.model_name}, system_instruction updated.")
 
-    def generate_response(self, history: list, new_prompt: str, temperature=0.7, top_p=0.9) -> str:
+    def generate_response(self, history=None, new_prompt="", temperature=0.7, top_p=0.9):
         """
-        根据对话历史和新的提示生成回复。
+        生成回复
         """
         try:
-            # 为API格式化历史记录
-            formatted_history = []
-            for sender, message in history:
-                if sender.lower() == 'you':
-                    role = 'user'
-                elif sender.lower() == 'gemini':
-                    role = 'model'
-                else:
-                    continue
-                formatted_history.append({'role': role, 'parts': [message]})
-            chat_session = self.model.start_chat(history=formatted_history)
+            logger.info(f"生成回复 - 模型: {self.model_name}, 温度: {temperature}, top_p: {top_p}")
+            
+            # 构建完整的对话历史
+            messages = []
+            if history:
+                for sender, message in history:
+                    role = "user" if sender == "You" else "model"
+                    messages.append({"role": role, "parts": [message]})
+            
+            # 添加新的用户消息
+            messages.append({"role": "user", "parts": [new_prompt]})
+            
+            # 设置生成配置
             generation_config = GenerationConfig(
                 temperature=temperature,
-                top_p=top_p
+                top_p=top_p,
+                max_output_tokens=8192,
             )
-            response = chat_session.send_message(
-                content=new_prompt,
+            
+            # 生成回复
+            response = self.model.generate_content(
+                messages,
                 generation_config=generation_config
             )
+            
+            logger.info("回复生成成功")
             return response.text
+            
         except Exception as e:
-            error_message = f"An error occurred: {e}"
-            print(error_message)
-            return error_message
+            logger.error(f"生成回复失败: {e}")
+            raise
 
     @staticmethod
     def get_available_models():
