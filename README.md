@@ -9,8 +9,10 @@
    前往google ai-studio官网( https://aistudio.google.com/apikey )获取api。
    点击“+ create api key ”
    ![alt text](image.png)
+   
    随后，在弹窗中选择Google Cloud Project的项目名为Gemini Api的项目，创建api
    ![alt text](image-1.png)
+   
    复制获取到的api填入api.txt文件中。
    获取的免费api受到统一的配额限制：每天50次gemini-pro和1500次gemini-flash的响应。如需额外响应次数，敬请自行搜索付费方法。
 ## 使用须知
