@@ -9,6 +9,7 @@ import tkinter.simpledialog
 import tkinter.filedialog
 from tkinter import messagebox, filedialog
 import re
+import threading
 
 
 class ChatApp(ctk.CTk):
@@ -37,19 +38,28 @@ class ChatApp(ctk.CTk):
         main_chat_frame = ctk.CTkFrame(self, fg_color="#ffffff", corner_radius=14)
         main_chat_frame.grid(row=0, column=1, rowspan=3, padx=20, pady=15, sticky="nsew")
         main_chat_frame.grid_rowconfigure(1, weight=1)
-        main_chat_frame.grid_columnconfigure(0, weight=1)
+        main_chat_frame.grid_columnconfigure(0, weight=0)
 
         # 提示词输入框（在大框内）
         self.prompt_var = ctk.StringVar()
+        self.prompt_label = ctk.CTkLabel(
+            main_chat_frame,
+            text="系统提示词 (Prompt)：",
+            font=("Microsoft YaHei", 13)
+        )
+        self.prompt_label.grid(row=0, column=0, sticky="w", padx=(16, 2), pady=(14, 2))
+
         self.prompt_entry = ctk.CTkEntry(
             main_chat_frame,
             font=("Microsoft YaHei", 14),
-            placeholder_text="系统提示词 (Prompt)："
+            textvariable=self.prompt_var
         )
-        self.prompt_entry.grid(row=0, column=0, columnspan=2, sticky="ew", padx=(16, 5), pady=(14, 2))
+        self.prompt_entry.grid(row=0, column=1, sticky="ew", padx=(0, 2), pady=(14, 2))
+        main_chat_frame.grid_columnconfigure(0, weight=0)  # Label 列不拉伸
+        main_chat_frame.grid_columnconfigure(1, weight=1)  # 输入框列自动拉伸
+        main_chat_frame.grid_columnconfigure(2, weight=0)  # 按钮列不拉伸
         self.apply_prompt_btn = ctk.CTkButton(main_chat_frame, text="应用", font=("Microsoft YaHei", 12), width=60, command=self.apply_prompt, fg_color="#3498db", text_color="#ffffff")
         self.apply_prompt_btn.grid(row=0, column=2, sticky="e", padx=(0, 16), pady=(14, 2))
-        main_chat_frame.grid_columnconfigure(0, weight=1)
 
         # 聊天显示区（在大框内）
         self.chat_display = ctk.CTkTextbox(main_chat_frame, state="disabled", wrap="word", font=("Microsoft YaHei", 14), fg_color="#ffffff", border_width=2, border_color="#636e72", corner_radius=8)
@@ -66,6 +76,7 @@ class ChatApp(ctk.CTk):
             font=("Microsoft YaHei", 14)
         )
         self.user_input.grid(row=0, column=0, padx=(0, 10), pady=8, sticky="ew")
+        self.user_input.bind("<Return>", self.send_message_event)
         self.send_button = ctk.CTkButton(input_row, text="发送", width=80, command=self.send_message, font=("Microsoft YaHei", 12), fg_color="#3498db", text_color="#ffffff")
         self.send_button.grid(row=0, column=1, padx=(0, 6), pady=8)
 
@@ -79,7 +90,7 @@ class ChatApp(ctk.CTk):
         default_model = model_list[0]
         ctk.CTkLabel(self.sidebar, text="选择模型", font=("Microsoft YaHei", 14, "bold")).pack(pady=(10, 2), padx=10, anchor="w")
         self.model_var = ctk.StringVar(value=default_model)
-        self.model_option = ctk.CTkOptionMenu(self.sidebar, variable=self.model_var, values=model_list, font=("Microsoft YaHei", 12), fg_color="#3498db", text_color="#ffffff")
+        self.model_option = ctk.CTkOptionMenu(self.sidebar, variable=self.model_var, values=model_list, font=("Microsoft YaHei", 12), fg_color="#3498db", text_color="#ffffff", command=self.on_model_change)
         self.model_option.pack(pady=(0, 15), fill="x", padx=10)
 
         # temperature参数
@@ -107,6 +118,14 @@ class ChatApp(ctk.CTk):
         # 新建对话按钮
         self.new_chat_btn = ctk.CTkButton(self.sidebar, text="新建对话", command=self.new_chat, font=("Microsoft YaHei", 12), fg_color="#3498db", text_color="#ffffff")
         self.new_chat_btn.pack(pady=(0, 15), fill="x", padx=10)
+
+        # 保存当前对话按钮
+        self.save_chat_btn = ctk.CTkButton(self.sidebar, text="保存当前对话", command=self.save_current_chat_to_file, font=("Microsoft YaHei", 12), fg_color="#27ae60", text_color="#ffffff")
+        self.save_chat_btn.pack(pady=(0, 8), fill="x", padx=10)
+
+        # 导入历史对话按钮
+        self.import_chat_btn = ctk.CTkButton(self.sidebar, text="导入历史对话", command=self.import_chat_from_file, font=("Microsoft YaHei", 12), fg_color="#e67e22", text_color="#ffffff")
+        self.import_chat_btn.pack(pady=(0, 15), fill="x", padx=10)
 
         # 对话历史列表
         ctk.CTkLabel(self.sidebar, text="对话历史", font=("Microsoft YaHei", 13, "bold")).pack(pady=(0, 2), padx=10, anchor="w")
@@ -197,31 +216,40 @@ class ChatApp(ctk.CTk):
         self.user_input.delete(0, "end")
         self.send_button.configure(state="disabled", text="...")
         self.update_idletasks()
-        
-        model_name = self.model_var.get()
-        temperature = self.temp_var.get()
-        top_p = self.top_p_var.get()
-        
-        current_chat = self.chats[self.current_chat_id]
-        history_for_api = current_chat["messages"][:-1]
 
-        self.gemini_client.set_model(model_name, system_instruction=current_chat.get("prompt", ""))
-        
-        response_text = self.gemini_client.generate_response(
-            history=history_for_api,
-            new_prompt=user_text,
-            temperature=temperature,
-            top_p=top_p
-        )
-        
+        def get_response():
+            if self.current_chat_id is None or self.current_chat_id not in self.chats:
+                return
+            model_name = self.model_var.get()
+            temperature = self.temp_var.get()
+            top_p = self.top_p_var.get()
+            current_chat = self.chats[self.current_chat_id]
+            history_for_api = current_chat["messages"][:-1]
+            self.gemini_client.set_model(model_name, system_instruction=current_chat.get("prompt", ""))
+            try:
+                response_text = self.gemini_client.generate_response(
+                    history=history_for_api,
+                    new_prompt=user_text,
+                    temperature=temperature,
+                    top_p=top_p
+                )
+            except Exception as e:
+                response_text = f"【出错】{e}"
+            # 回到主线程更新界面
+            self.after(0, lambda: self.finish_response(response_text, user_text))
+
+        threading.Thread(target=get_response, daemon=True).start()
+
+    def finish_response(self, response_text, user_text):
+        if self.current_chat_id is None or self.current_chat_id not in self.chats:
+            return
         self.send_button.configure(state="normal", text="发送")
         self.add_message_to_display("Gemini", response_text)
-
+        current_chat = self.chats[self.current_chat_id]
         # 保留：如果用户未手动修改标题，发送第一条消息后自动用内容命名
         if len(current_chat["messages"]) == 2 and current_chat["title"] == "新对话":
             current_chat["title"] = user_text[:30]
             self.refresh_chat_list()
-        
         self.save_history()
 
     def send_message_event(self, event):
@@ -332,6 +360,13 @@ class ChatApp(ctk.CTk):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 chat = json.load(f)
+            # 数据健壮性校验和修复
+            if "messages" not in chat or not isinstance(chat["messages"], list):
+                chat["messages"] = []
+            # 修正messages内部元素类型（如有元组转为列表）
+            chat["messages"] = [list(m) if isinstance(m, tuple) else m for m in chat["messages"]]
+            if "prompt" not in chat or not isinstance(chat["prompt"], str):
+                chat["prompt"] = ""
             # 生成唯一ID，避免冲突
             chat_id = str(uuid.uuid4())
             # 如果title重名自动加后缀
@@ -343,13 +378,28 @@ class ChatApp(ctk.CTk):
                 title = f"{orig_title}_{i}"
                 i += 1
             chat["title"] = title
-            if "prompt" not in chat:
-                chat["prompt"] = ""
-            self.chats[chat_id] = chat
-            self.current_chat_id = chat_id
-            self.switch_chat(chat_id)
-            self.refresh_chat_list()
-            messagebox.showinfo("导入成功", f"已导入对话：{title}")
+            # 弹窗询问导入方式
+            import tkinter.simpledialog
+            import tkinter.messagebox
+            result = tkinter.messagebox.askquestion(
+                "导入方式选择",
+                "请选择导入方式：\n是 - 替换所有历史\n否 - 作为新对话导入",
+                icon='question'
+            )
+            if result == 'yes':
+                # 替换所有历史
+                self.chats = {chat_id: chat}
+                self.current_chat_id = chat_id
+                self.switch_chat(chat_id)
+                self.refresh_chat_list()
+                messagebox.showinfo("导入成功", f"已替换所有历史，当前对话：{title}")
+            else:
+                # 作为新对话导入
+                self.chats[chat_id] = chat
+                self.current_chat_id = chat_id
+                self.switch_chat(chat_id)
+                self.refresh_chat_list()
+                messagebox.showinfo("导入成功", f"已导入对话：{title}")
         except Exception as e:
             messagebox.showerror("导入失败", f"导入失败：{e}")
 
@@ -375,6 +425,15 @@ class ChatApp(ctk.CTk):
             return
         prompt = self.prompt_var.get()
         self.chats[self.current_chat_id]["prompt"] = prompt
+        model_name = self.model_var.get()
+        self.gemini_client.set_model(model_name, system_instruction=prompt)
+        self.apply_prompt_btn.configure(text="√")
+        self.after(1500, lambda: self.apply_prompt_btn.configure(text="应用"))
+
+    def on_model_change(self, *args):
+        if not self.current_chat_id:
+            return
+        prompt = self.chats[self.current_chat_id].get("prompt", "")
         model_name = self.model_var.get()
         self.gemini_client.set_model(model_name, system_instruction=prompt)
 

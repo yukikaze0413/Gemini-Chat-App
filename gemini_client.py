@@ -2,15 +2,20 @@
 import os
 import google.generativeai as genai
 from google.generativeai.client import configure
+from google.generativeai.models import list_models
 from google.generativeai.generative_models import GenerativeModel
 from google.generativeai.types import GenerationConfig
+import sys
 
-def read_api_key_from_txt(path="api.txt"):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except Exception:
-        return None
+def get_api_file_path():
+    if getattr(sys, 'frozen', False):
+        # 打包后
+        exe_dir = os.path.dirname(sys.executable)
+        api_path = os.path.join(exe_dir, "api.txt")
+    else:
+        # 源码运行
+        api_path = os.path.join(os.path.dirname(__file__), "api.txt")
+    return api_path
 
 class GeminiClient:
     def __init__(self, api_key=None, model_name="gemini-2.5-flash", system_instruction=None):
@@ -18,7 +23,9 @@ class GeminiClient:
         初始化 Gemini 客户端。
         """
         if api_key is None:
-            api_key = read_api_key_from_txt()
+            api_file = get_api_file_path()
+            with open(api_file, "r", encoding="utf-8") as f:
+                api_key = f.read().strip()
         if not api_key:
             raise ValueError("API Key not found. Please make sure api.txt exists and contains your API key.")
         configure(api_key=api_key)
@@ -83,16 +90,19 @@ class GeminiClient:
         """
         获取所有支持 generateContent 的模型短名列表。
         """
-        api_key = read_api_key_from_txt()
+        api_file = get_api_file_path()
+        with open(api_file, "r", encoding="utf-8") as f:
+            api_key = f.read().strip()
         if not api_key:
             print("❌ 错误: 在 api.txt 文件中未找到 API Key。")
             return []
         try:
-            genai.configure(api_key=api_key)
+            # genai.configure(api_key=api_key)
+            configure(api_key=api_key)
             models = []
-            for model in genai.list_models():
-                if 'generateContent' in getattr(model, 'supported_generation_methods', []):
-                    name = model.name
+            for m in list_models():
+                if 'generateContent' in getattr(m, 'supported_generation_methods', []):
+                    name = m.name
                     if name.startswith("models/"):
                         name = name.split("/", 1)[1]
                     models.append(name)
